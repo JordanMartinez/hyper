@@ -4,7 +4,15 @@ let mkPackage =
 let upstream =
       https://github.com/purescript/package-sets/releases/download/psc-0.13.2-20190804/packages.dhall sha256:2230fc547841b54bca815eb0058414aa03ed7b675042f8b3dda644e1952824e5
 
-let overrides = {=}
+let overrides =
+      { indexed-monad =
+              upstream.indexed-monad
+          //  { repo =
+                  "https://github.com/JordanMartinez/purescript-indexed-monad.git"
+              , version =
+                  "qualifiedDoForIndexed"
+              }
+      }
 
 let additions = {=}
 
