@@ -2,7 +2,8 @@ module ReadBody where
 
 import Prelude
 
-import Control.Monad.Indexed ((:>>=), (:*>))
+import Control.Monad.Indexed ((:>>=))
+import Control.Monad.Indexed.Qualified as Ix
 import Data.Either (Either(..))
 import Data.HTTP.Method (Method(..))
 import Effect (Effect)
@@ -25,17 +26,16 @@ onPost
      (Conn req BodyRead res ResponseEnded c)
      Unit
 -- start snippet onPost
-onPost =
-  readBody :>>=
-  case _ of
-    "" ->
+onPost = Ix.do
+  readBody :>>= case _ of
+    "" -> Ix.do
       writeStatus statusBadRequest
-      :*> closeHeaders
-      :*> respond "... anyone there?"
-    msg ->
+      closeHeaders
+      respond "... anyone there?"
+    msg -> Ix.do
       writeStatus statusBadRequest
-      :*> closeHeaders
-      :*> respond ("You said: " <> msg)
+      closeHeaders
+      respond ("You said: " <> msg)
 -- end snippet onPost
 
 main :: Effect Unit
@@ -45,16 +45,16 @@ main =
       _.method <$> getRequestData :>>=
       case _ of
         Left POST -> onPost
-        Left method ->
+        Left method -> Ix.do
           ignoreBody
-          :*> writeStatus statusMethodNotAllowed
-          :*> closeHeaders
-          :*> respond ("Method not supported: " <> show method)
-        Right customMethod ->
+          writeStatus statusMethodNotAllowed
+          closeHeaders
+          respond ("Method not supported: " <> show method)
+        Right customMethod -> Ix.do
           ignoreBody
-          :*> writeStatus statusMethodNotAllowed
-          :*> closeHeaders
-          :*> respond ("Custom method not supported: " <> show customMethod)
+          writeStatus statusMethodNotAllowed
+          closeHeaders
+          respond ("Custom method not supported: " <> show customMethod)
 
   -- Let's run it.
   in runServer defaultOptionsWithLogging {} router

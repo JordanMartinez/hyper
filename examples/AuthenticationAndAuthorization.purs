@@ -9,7 +9,8 @@ module Examples.AuthenticationAndAuthorization where
 
 import Prelude
 
-import Control.Monad.Indexed ((:>>=), (:*>))
+import Control.Monad.Indexed ((:>>=))
+import Control.Monad.Indexed.Qualified as Ix
 import Data.Either (Either(..))
 import Data.HTTP.Method (Method(GET))
 import Data.Maybe (Maybe(Nothing, Just))
@@ -42,11 +43,11 @@ htmlWithStatus
   => Status
   -> Markup Unit
   -> ResponseTransition m req reqState res StatusLineOpen ResponseEnded c Unit
-htmlWithStatus status x =
+htmlWithStatus status x = Ix.do
   writeStatus status
-  :*> contentType textHTML
-  :*> closeHeaders
-  :*> respond (render x)
+  contentType textHTML
+  closeHeaders
+  respond (render x)
 
 
 -- Users have user names.
@@ -72,11 +73,9 @@ profileHandler
       StatusLineOpen ResponseEnded
       { | AUTHENTICATION_ROWS (Maybe User) c }
       Unit
-profileHandler =
-  getConn :>>= \conn →
-  htmlWithStatus
-  statusOK
-  (view conn.components.authentication)
+profileHandler = Ix.do
+  conn <- getConn
+  htmlWithStatus statusOK (view conn.components.authentication)
   where
     view =
       case _ of
@@ -105,11 +104,9 @@ adminHandler
       StatusLineOpen ResponseEnded
       { | AUTHORIZATION_ROWS Admin + AUTHENTICATION_ROWS User c }
       Unit
-adminHandler =
-  getConn :>>= \conn →
-  htmlWithStatus
-  statusOK
-  (view conn.components.authentication)
+adminHandler = Ix.do
+  conn <- getConn
+  htmlWithStatus statusOK (view conn.components.authentication)
   where
     view (User { name }) =
       section do
@@ -168,8 +165,8 @@ app = BasicAuth.withAuthentication userFromBasicAuth :>>= \_ → router
             li (a ! A.href "/profile" $ text "Profile")
             li (a ! A.href "/admin" $ text "Administration")
 
-      router =
-        getRequestData :>>= \{ method, url } →
+      router = Ix.do
+        { method, url } <- getRequestData
         case method, url of
           Left GET, "/" ->
             htmlWithStatus statusOK homeView

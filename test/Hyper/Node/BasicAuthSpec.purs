@@ -1,7 +1,7 @@
 module Hyper.Node.BasicAuthSpec where
 
 import Prelude
-import Control.Monad.Indexed (ibind)
+import Control.Monad.Indexed.Qualified as Ix
 import Data.Maybe (Maybe(Nothing, Just))
 import Data.Newtype (unwrap, class Newtype)
 import Data.Tuple (fst, Tuple(Tuple))
@@ -58,12 +58,11 @@ spec =
         map unwrap response.components.authentication `shouldEqual` Just "user"
 
     describe "authenticated" do
-      let respondUserName = do
+      let respondUserName = Ix.do
             conn <- getConn
-            _ <- writeStatus statusOK
-            _ <- headers []
+            writeStatus statusOK
+            headers []
             respond (unwrap conn.components.authentication)
-            where bind = ibind
 
       it "runs the middleware with the authenticated user when available" do
         conn <- { request: TestRequest defaultRequest

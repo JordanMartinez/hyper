@@ -2,7 +2,8 @@ module Hyper.Node.FileServer (fileServer) where
 
 import Prelude
 
-import Control.Monad.Indexed (ibind, (:>>=))
+import Control.Monad.Indexed ((:>>=))
+import Control.Monad.Indexed.Qualified as Ix
 import Data.Array (last)
 import Data.Map (Map, fromFoldable, lookup)
 import Data.Maybe (maybe)
@@ -131,20 +132,19 @@ serveFile'
   => Map String String
   -> FilePath
   -> ResponseTransition m req reqState res StatusLineOpen ResponseEnded c Unit
-serveFile' htaccessMap path = do
+serveFile' htaccessMap path = Ix.do
   let
     ext = last $ split (Pattern ".") path
     contentType = maybe "*/*" identity (ext >>= flip lookup htaccessMap)
   buf <- lift' (liftAff (readFile path))
   contentLength <- liftEffect (Buffer.size buf)
-  _ <- writeStatus statusOK
-  _ <- headers [ Tuple "Content-Type" (contentType <> "; charset=utf-8")
+  writeStatus statusOK
+  headers [ Tuple "Content-Type" (contentType <> "; charset=utf-8")
           , Tuple "Content-Length" (show contentLength)
           ]
   response <- toResponse buf
-  _ <- send response
+  send response
   end
-  where bind = ibind
 
 fileServer
   :: forall m req reqState (res :: ResponseState -> Type) c b
@@ -170,7 +170,7 @@ fileServer'
   -> FilePath
   -> ResponseTransition m req reqState res StatusLineOpen ResponseEnded c Unit
   -> ResponseTransition m req reqState res StatusLineOpen ResponseEnded c Unit
-fileServer' htaccessMap dir on404 = do
+fileServer' htaccessMap dir on404 = Ix.do
   conn ← getConn
   { url } <- getRequestData
   serve (Path.concat [dir, url])
@@ -180,10 +180,8 @@ fileServer' htaccessMap dir on404 = do
       | isDirectory stats = serve (Path.concat [absolutePath, "index.html"])
       | otherwise = on404
 
-    serve absolutePath = do
+    serve absolutePath = Ix.do
       fExists ← lift' (liftAff (exists absolutePath))
       if fExists
         then lift' (liftAff (stat absolutePath)) :>>= serveStats absolutePath
         else on404
-
-    bind = ibind

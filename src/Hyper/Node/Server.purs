@@ -11,9 +11,9 @@ module Hyper.Node.Server
 
 import Prelude
 
-import Control.Bind.Indexed (ibind)
 import Control.Monad.Error.Class (throwError)
 import Control.Monad.Indexed (ipure, (:>>=))
+import Control.Monad.Indexed.Qualified as Ix
 import Data.Either (Either(..), either)
 import Data.HTTP.Method as Method
 import Data.Int as Int
@@ -118,17 +118,17 @@ readBodyAsBuffer (HttpRequest request _) = do
 
 instance readableBodyHttpRequestString :: (Monad m, MonadAff m)
                                        => ReadableBody HttpRequest m String where
-  readBody = let bind = ibind in do
+  readBody = Ix.do
     buf <- readBody
     liftEffect $ Buffer.toString UTF8 buf
 
 instance readableBodyHttpRequestBuffer :: (Monad m, MonadAff m)
                                        => ReadableBody HttpRequest m Buffer where
-  readBody = let bind = ibind in do
+  readBody = Ix.do
     conn <- getConn
     body <- lift' (liftAff (readBodyAsBuffer conn.request))
     let HttpRequest request reqData = conn.request
-    _ <- putConn (conn { request = HttpRequest request reqData })
+    putConn (conn { request = HttpRequest request reqData })
     ipure body
 
 instance streamableBodyHttpRequestReadable :: MonadAff m
@@ -136,10 +136,10 @@ instance streamableBodyHttpRequestReadable :: MonadAff m
                                               HttpRequest
                                               m
                                               (Stream (read :: Stream.Read)) where
-  streamBody useStream = let bind = ibind in do
+  streamBody useStream = Ix.do
     conn <- getConn
     let HttpRequest request reqData = conn.request
-    _ <- lift' (useStream (HTTP.requestAsStream request))
+    lift' (useStream (HTTP.requestAsStream request))
     putConn (conn { request = HttpRequest request reqData })
 
 newtype HttpResponse (resState :: ResponseState) = HttpResponse HTTP.Response
@@ -207,34 +207,34 @@ unsafeEndResponse r =
 
 instance responseWriterHttpResponse :: MonadAff m
                                     => Response HttpResponse m (NodeResponse m) where
-  writeStatus status = let bind = ibind in do
+  writeStatus status = Ix.do
     conn <- getConn
     let HttpResponse r = conn.response
-    _ <- unsafeSetStatus status r
-    putConn (conn { response = HttpResponse r})
+    unsafeSetStatus status r
+    putConn (conn { response = HttpResponse r })
 
-  writeHeader header = let bind = ibind in do
+  writeHeader header = Ix.do
     conn <- getConn
     let HttpResponse r = conn.response
-    _ <- writeHeader' header r
-    putConn (conn { response = HttpResponse r})
+    writeHeader' header r
+    putConn (conn { response = HttpResponse r })
 
-  closeHeaders = let bind = ibind in do
+  closeHeaders = Ix.do
     conn <- getConn
     let HttpResponse r = conn.response
-    putConn (conn { response = HttpResponse r})
+    putConn (conn { response = HttpResponse r })
 
-  send f = let bind = ibind in do
+  send f = Ix.do
     conn <- getConn
     let HttpResponse r = conn.response
-    _ <- writeResponse r f
-    putConn (conn { response = HttpResponse r})
+    writeResponse r f
+    putConn (conn { response = HttpResponse r })
 
-  end = let bind = ibind in do
+  end = Ix.do
     conn <- getConn
     let HttpResponse r = conn.response
-    _ <- unsafeEndResponse r
-    putConn (conn { response = HttpResponse r})
+    unsafeEndResponse r
+    putConn (conn { response = HttpResponse r })
 
 
 mkHttpRequest :: HTTP.Request -> HttpRequest BodyUnread

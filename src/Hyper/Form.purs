@@ -13,7 +13,8 @@ module Hyper.Form
 import Prelude
 
 import Control.Monad.Error.Class (throwError)
-import Control.Monad.Indexed (ibind, ipure, (:>>=))
+import Control.Monad.Indexed (ipure, (:>>=))
+import Control.Monad.Indexed.Qualified as Ix
 import Data.Array (head)
 import Data.Either (Either(..))
 import Data.Maybe (Maybe(Just, Nothing), maybe)
@@ -62,7 +63,7 @@ parseForm ∷ forall m req (res :: ResponseState -> Type) comp (resState :: Resp
   => Request req m
   => ReadableBody req m String
   => RequestTransition m req BodyUnread BodyRead res resState comp (Either String Form)
-parseForm = do
+parseForm = Ix.do
   conn <- getConn
   { headers } <- getRequestData
   body <- readBody
@@ -73,7 +74,6 @@ parseForm = do
       ipure (Form <$> parseUrlencoded body)
     Just mediaType ->
       ipure (Left ("Cannot parse media of type: " <> show mediaType))
-  where bind = ibind
 
 
 class ToForm a where

@@ -1,7 +1,7 @@
 module NodeReaderT where
 
 import Prelude
-import Control.Monad.Indexed ((:>>=), (:*>))
+import Control.Monad.Indexed.Qualified as Ix
 import Effect.Aff (Aff)
 import Effect (Effect)
 import Control.Monad.Reader (ReaderT, ask, runReaderT)
@@ -21,10 +21,10 @@ runAppM = flip runReaderT { thingToSay: "Hello, ReaderT!" }
 
 main :: Effect Unit
 main =
-  let app =
-        lift' ask :>>= \config ->
-          writeStatus statusOK
-          :*> closeHeaders
-          :*> respond config.thingToSay
+  let app = Ix.do
+        config <- lift' ask
+        writeStatus statusOK
+        closeHeaders
+        respond config.thingToSay
   in runServer' defaultOptionsWithLogging {} runAppM app
 -- end snippet main

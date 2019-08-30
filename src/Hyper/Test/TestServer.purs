@@ -2,9 +2,9 @@ module Hyper.Test.TestServer where
 
 import Control.Alt ((<|>))
 import Control.Applicative (pure)
-import Control.Bind.Indexed (ibind)
 import Control.Monad (class Monad, void)
 import Control.Monad.Indexed (ipure, (:*>))
+import Control.Monad.Indexed.Qualified as Ix
 import Control.Monad.Writer (WriterT, execWriterT, tell)
 import Control.Monad.Writer.Class (class MonadTell)
 import Data.Either (Either(..))
@@ -51,14 +51,14 @@ defaultRequest =
 
 instance readableBodyStringBody :: Monad m
                                 => ReadableBody TestRequest m String where
-  readBody = let bind = ibind in do
+  readBody = Ix.do
     conn <- getConn
     let TestRequest rec = conn.request
     _ <- putConn (conn { request = TestRequest rec })
     ipure rec.body
 
 instance requestTestRequest :: Monad m => Request TestRequest m where
-  getRequestData = let bind = ibind in do
+  getRequestData = Ix.do
     conn <- getConn
     let TestRequest r = conn.request
     _ <- putConn (conn { request = TestRequest r })

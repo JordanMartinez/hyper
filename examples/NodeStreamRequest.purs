@@ -13,7 +13,8 @@ module Examples.NodeStreamRequest where
 
 import Prelude
 
-import Control.Monad.Indexed (ibind, (:>>=))
+import Control.Monad.Indexed ((:>>=))
+import Control.Monad.Indexed.Qualified as Ix
 import Data.Either (Either(..), either)
 import Data.HTTP.Method (Method(..))
 import Effect (Effect)
@@ -45,20 +46,17 @@ main =
       case _ of
 
         -- Only handle POST requests:
-        { method: Left POST } -> do
+        { method: Left POST } -> Ix.do
             streamBody \body -> logRequestBodyChunks body
             writeStatus statusOK
             closeHeaders
             respond "OK"
 
         -- Non-POST requests are not allowed:
-        { method } -> do
+        { method } -> Ix.do
           ignoreBody
           writeStatus statusMethodNotAllowed
           closeHeaders
           respond ("Method not allowed: " <> either show show method)
 
-        where
-            bind = ibind
-            discard = ibind
   in runServer defaultOptionsWithLogging {} app

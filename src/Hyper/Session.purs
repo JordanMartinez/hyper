@@ -12,7 +12,8 @@ module Hyper.Session
 
 import Prelude
 
-import Control.Monad.Indexed (ibind, ipure, (:>>=))
+import Control.Monad.Indexed (ipure, (:>>=))
+import Control.Monad.Indexed.Qualified as Ix
 import Data.Either (Either(..))
 import Data.Maybe (Maybe(Nothing, Just), maybe)
 import Data.Newtype (class Newtype, unwrap)
@@ -67,13 +68,12 @@ getSession
       { | SESSION_ROWS store + COOKIES_ROWS' c }
       { | SESSION_ROWS store + COOKIES_ROWS' c }
       (Maybe session)
-getSession = do
+getSession = Ix.do
   conn <- getConn
   sessionId <- currentSessionID
   case sessionId of
     Just id' -> lift' (get conn.components.sessions.store id')
     Nothing -> ipure Nothing
-  where bind = ibind
 
 saveSession
   :: forall m req reqState (res :: ResponseState -> Type) c b store session
@@ -85,7 +85,7 @@ saveSession
       { | SESSION_ROWS store + COOKIES_ROWS' c }
       { | SESSION_ROWS store + COOKIES_ROWS' c }
       Unit
-saveSession session = do
+saveSession session = Ix.do
   conn <- getConn
   sessionId <-
     currentSessionID :>>=
@@ -99,8 +99,6 @@ saveSession session = do
     conn.components.sessions.key
     (unwrap sessionId)
     (defaultCookieAttributes { sameSite=Just Lax, httpOnly=true })
-  where
-    bind = ibind
 
 deleteSession
   :: forall m req reqState (res :: ResponseState -> Type) c b store session
@@ -111,8 +109,12 @@ deleteSession
       { | SESSION_ROWS store + COOKIES_ROWS' c }
       { | SESSION_ROWS store + COOKIES_ROWS' c }
       Unit
-deleteSession = do
+deleteSession = Ix.do
   conn <- getConn
-  _ <- maybe (ipure unit) (lift' <<< delete conn.components.sessions.store) <$> currentSessionID
+  sessionId <- currentSessionID
+  case sessionId of
+    Nothing -> ipure unit
+    Just id -> lift' $ delete conn.components.sessions.store id
+  -- maybe (pure unit) ((delete conn.components.sessions.store) <$> currentSessionID)
   -- TODO: Better delete?
   setCookie conn.components.sessions.key "" (defaultCookieAttributes { maxAge=maxAge 0 })

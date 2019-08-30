@@ -3,7 +3,8 @@ module FormSerialization where
 import Prelude
 
 import Control.Monad.Error.Class (throwError)
-import Control.Monad.Indexed ((:>>=), (:*>))
+import Control.Monad.Indexed ((:>>=))
+import Control.Monad.Indexed.Qualified as Ix
 import Data.Either (Either(..))
 import Data.Generic.Rep (class Generic)
 import Data.Generic.Rep.Eq (genericEq)
@@ -69,19 +70,19 @@ onPost
 onPost =
   parseFromForm :>>=
   case _ of
-    Left err ->
+    Left err -> Ix.do
       writeStatus statusBadRequest
-      :*> closeHeaders
-      :*> respond (err <> "\n")
+      closeHeaders
+      respond (err <> "\n")
     Right (Order { beers, meal })
-      | meal == Omnivore || meal == Carnivore ->
+      | meal == Omnivore || meal == Carnivore -> Ix.do
         writeStatus statusBadRequest
-        :*> closeHeaders
-        :*> respond "Sorry, we do not serve meat here.\n"
-      | otherwise ->
+        closeHeaders
+        respond "Sorry, we do not serve meat here.\n"
+      | otherwise -> Ix.do
         writeStatus statusBadRequest
-        :*> closeHeaders
-        :*> respond ("One " <> show meal <> " meal and "
+        closeHeaders
+        respond ("One " <> show meal <> " meal and "
                      <> show beers <> " beers coming up!\n")
 -- end snippet onPost
 
@@ -92,16 +93,16 @@ main =
       _.method <$> getRequestData :>>=
       case _ of
         Left POST -> onPost
-        Left method ->
+        Left method -> Ix.do
           ignoreBody
-          :*> writeStatus statusMethodNotAllowed
-          :*> closeHeaders
-          :*> respond ("Method not supported: " <> show method)
-        Right customMethod ->
+          writeStatus statusMethodNotAllowed
+          closeHeaders
+          respond ("Method not supported: " <> show method)
+        Right customMethod -> Ix.do
           ignoreBody
-          :*> writeStatus statusMethodNotAllowed
-          :*> closeHeaders
-          :*> respond ("Custom method not supported: " <> show customMethod)
+          writeStatus statusMethodNotAllowed
+          closeHeaders
+          respond ("Custom method not supported: " <> show customMethod)
 
   -- Let's run it.
   in runServer defaultOptionsWithLogging {} router

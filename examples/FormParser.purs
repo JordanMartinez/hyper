@@ -2,8 +2,8 @@ module Examples.FormParser where
 
 import Prelude
 
-import Control.Bind.Indexed (ibind)
 import Control.Monad.Indexed ((:>>=), (:*>))
+import Control.Monad.Indexed.Qualified as Ix
 import Data.Either (Either(Right, Left))
 import Data.HTTP.Method (Method(..))
 import Data.Maybe (Maybe(Nothing, Just))
@@ -50,11 +50,11 @@ main =
                         HttpResponse StatusLineOpen ResponseEnded
                         comp
                         Unit
-    htmlWithStatus status x =
+    htmlWithStatus status x = Ix.do
       writeStatus status
-      :*> contentType textHTML
-      :*> closeHeaders
-      :*> respond (render x)
+      contentType textHTML
+      closeHeaders
+      respond (render x)
 
     handlePost :: forall comp
                 . ConnTransition
@@ -89,16 +89,16 @@ main =
                     HttpResponse StatusLineOpen ResponseEnded
                     comp
                     Unit
-    router = let bind = ibind in do
+    router = Ix.do
       reqData <- getRequestData
       case reqData.method of
-        Left GET -> do
-          _ <- ignoreBody
+        Left GET -> Ix.do
+          ignoreBody
           htmlWithStatus statusOK (renderNameForm Nothing)
-        Left POST -> do
+        Left POST -> Ix.do
           handlePost
-        method -> do
-          _ <- ignoreBody
+        method -> Ix.do
+          ignoreBody
           htmlWithStatus statusMethodNotAllowed
             (text ("Method not supported: " <> show method))
 
