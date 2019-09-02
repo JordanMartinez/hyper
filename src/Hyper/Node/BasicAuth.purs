@@ -1,7 +1,7 @@
 module Hyper.Node.BasicAuth where
 
 import Control.Monad (class Monad, (>>=))
-import Control.Monad.Indexed (ibind, ipure)
+import Control.Monad.Indexed (ipure)
 import Control.Monad.Indexed.Qualified as Ix
 import Data.Functor ((<$>))
 import Data.Maybe (Maybe(Nothing, Just))

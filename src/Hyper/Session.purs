@@ -15,7 +15,7 @@ import Prelude
 import Control.Monad.Indexed (ipure, (:>>=))
 import Control.Monad.Indexed.Qualified as Ix
 import Data.Either (Either(..))
-import Data.Maybe (Maybe(Nothing, Just), maybe)
+import Data.Maybe (Maybe(Nothing, Just))
 import Data.Newtype (class Newtype, unwrap)
 import Data.NonEmpty as NonEmpty
 import Foreign.Object as Object
