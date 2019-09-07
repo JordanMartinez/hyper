@@ -10,7 +10,7 @@ let overrides =
           //  { repo =
                   "https://github.com/JordanMartinez/purescript-indexed-monad.git"
               , version =
-                  "qualifiedDoForIndexed"
+                  "validTransition"
               }
       }
 
