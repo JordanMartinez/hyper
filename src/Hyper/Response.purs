@@ -2,76 +2,81 @@ module Hyper.Response where
 
 import Prelude
 
-import Control.Monad.Indexed ((:>>=), (:*>))
-import Data.Foldable (class Foldable, traverse_)
+import Control.Monad.Indexed (class IxMonad)
+import Control.Monad.Indexed.Qualified as Ix
+import Control.ValidTransition (class ValidTransition)
 import Data.MediaType (MediaType)
 import Data.Newtype (unwrap)
 import Data.Tuple (Tuple(Tuple))
-import Hyper.Conn (BodyOpen, HeadersOpen, NoTransition, ResponseEnded, ResponseTransition, StatusLineOpen, kind ResponseState)
+import Hyper.Conn (BodyOpen, Conn, HeadersOpen, ReqProxy, ResponseEnded, StatusLineOpen, kind RequestState, kind ResponseState)
 import Hyper.Header (Header)
-import Hyper.Middleware (Middleware)
 import Hyper.Status (Status, statusFound)
 
 -- | The operations that a response writer, provided by the server backend,
 -- | must support.
-class Response (res :: ResponseState -> Type) m b | res -> b where
+class (IxMonad m) <= Response m body | m -> body where
   writeStatus
-    :: forall req reqState comp
+    :: forall (reqState :: RequestState)
      . Status
-    -> ResponseTransition m req reqState res StatusLineOpen HeadersOpen comp Unit
+    -> m (Conn reqState StatusLineOpen) (Conn reqState HeadersOpen) Unit
+
   writeHeader
-    :: forall req reqState comp
+    :: forall (reqState :: RequestState)
      . Header
-    -> NoTransition m req reqState res HeadersOpen comp Unit
+    -> m (Conn reqState HeadersOpen) (Conn reqState HeadersOpen) Unit
+
   closeHeaders
-    :: forall req reqState comp
-     . ResponseTransition m req reqState res HeadersOpen BodyOpen comp Unit
+    :: forall (reqState :: RequestState)
+     . m (Conn reqState HeadersOpen) (Conn reqState BodyOpen) Unit
+
   send
-    :: forall req reqState comp
-     . b
-    -> NoTransition m req reqState res BodyOpen comp Unit
+    :: forall (reqState :: RequestState)
+     . body
+    -> m (Conn reqState BodyOpen) (Conn reqState BodyOpen) Unit
+
   end
-    :: forall req reqState comp
-     . ResponseTransition m req reqState res BodyOpen ResponseEnded comp Unit
+    :: forall (reqState :: RequestState)
+     . m (Conn reqState BodyOpen) (Conn reqState ResponseEnded) Unit
 
-headers
-  :: forall f m req reqState (res :: ResponseState -> Type) b comp
-  .  Foldable f
-  => Monad m
-  => Response res m b
-  => f Header
-  -> ResponseTransition m req reqState res HeadersOpen BodyOpen comp Unit
-headers hs =
-  traverse_ writeHeader hs
-  :*> closeHeaders
+-- headers :: forall f m body (reqState :: RequestState)
+--          . Foldable f
+--         => ValidTransition (ReqProxy reqState) (ReqProxy reqState)
+--         => Response m body
+--         => f Header
+--         -> m (Conn reqState HeadersOpen) (Conn reqState BodyOpen) Unit
+-- headers hs = Ix.do
+--   traverse_ writeHeader hs
+--   closeHeaders
 
-contentType
-  :: forall m req reqState (res :: ResponseState -> Type) b comp
-  .  Monad m
-  => Response res m b
-   => MediaType
-   -> NoTransition m req reqState res HeadersOpen comp Unit
+contentType :: forall m body (reqState :: RequestState)
+             . ValidTransition (ReqProxy reqState) (ReqProxy reqState)
+            => Response m body
+            => MediaType
+            -> m (Conn reqState HeadersOpen) (Conn reqState HeadersOpen) Unit
 contentType mediaType =
   writeHeader (Tuple "Content-Type" (unwrap mediaType))
 
-redirect
-  :: forall m req reqState (res :: ResponseState -> Type) b comp
-  .  Monad m
-  => Response res m b
-  => String
-  -> ResponseTransition m req reqState res StatusLineOpen HeadersOpen comp Unit
-redirect uri =
+redirect :: forall m body (reqState :: RequestState)
+          . ValidTransition (ReqProxy reqState) (ReqProxy reqState)
+         => Response m body
+         => String
+         -> m (Conn reqState StatusLineOpen) (Conn reqState HeadersOpen) Unit
+redirect uri = Ix.do
   writeStatus statusFound
-  :*> writeHeader (Tuple "Location" uri)
+  writeHeader (Tuple "Location" uri)
 
-class ResponseWritable b m r where
-  toResponse :: forall i. r -> Middleware m i i b
+class (IxMonad m) <= ResponseWritable m responseData body where
+  toResponse :: forall (reqState :: RequestState) (resState :: ResponseState)
+              . responseData
+             -> m (Conn reqState resState) (Conn reqState resState) body
 
-respond
-  :: forall m r b req reqState (res :: ResponseState -> Type) comp
-  .  Monad m
-  => ResponseWritable b m r
-  => Response res m b
-  => r
-  -> ResponseTransition m req reqState res BodyOpen ResponseEnded comp Unit
-respond r = (toResponse r :>>= send) :*> end
+respond :: forall m body r (reqState :: RequestState)
+         . ValidTransition (ReqProxy reqState) (ReqProxy reqState)
+        => Response m body
+        => ResponseWritable m r body
+        => r
+        -> m (Conn reqState BodyOpen) (Conn reqState ResponseEnded) Unit
+respond r = Ix.do
+  response <- toResponse r
+  send response
+  end
