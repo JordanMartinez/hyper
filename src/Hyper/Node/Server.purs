@@ -1,22 +1,23 @@
 module Hyper.Node.Server
        ( HttpRequest
-       , HttpResponse
        , NodeResponse
+       , Hyper
        , writeString
        , write
        , module Hyper.Node.Server.Options
        , runServer
-       , runServer'
+       -- , runServer'
        ) where
 
 import Prelude
 
 import Control.Monad.Error.Class (throwError)
-import Control.Monad.Indexed (ipure, (:>>=))
-import Control.Monad.Indexed.Qualified as Ix
+import Control.Monad.Indexed (class IxApplicative, class IxApply, class IxBind, class IxFunctor, class IxMonad)
+import Control.Monad.Reader (class MonadAsk, ReaderT, ask, runReaderT)
 import Data.Either (Either(..), either)
 import Data.HTTP.Method as Method
 import Data.Int as Int
+import Data.Indexed (Indexed(..))
 import Data.Lazy (defer)
 import Data.Maybe (Maybe(..))
 import Data.Newtype (unwrap)
@@ -25,16 +26,15 @@ import Effect (Effect)
 import Effect.Aff (Aff, launchAff, launchAff_, makeAff, nonCanceler, runAff_)
 import Effect.Aff.AVar (empty, new, put, take)
 import Effect.Aff.Class (class MonadAff, liftAff)
-import Effect.Class (class MonadEffect, liftEffect)
-import Effect.Exception (catchException)
+import Effect.Class (liftEffect)
+import Effect.Exception (catchException, Error)
 import Foreign.Object as Object
-import Hyper.Conn (BodyOpen, BodyUnread, ConnTransition', HeadersOpen, NoTransition, ResponseEnded, StatusLineOpen, kind RequestState, kind ResponseState)
-import Hyper.Middleware (evalMiddleware, lift')
-import Hyper.Middleware.Class (getConn, putConn)
+import Hyper.Conn (BodyOpen, BodyRead, BodyUnread, Conn, HeadersOpen, ResponseEnded, StatusLineOpen, kind RequestState, kind ResponseState)
+import Hyper.Header (Header)
 import Hyper.Node.Server.Options (Hostname(..), Options, Port(..), defaultOptions, defaultOptionsWithLogging) as Hyper.Node.Server.Options
 import Hyper.Node.Server.Options (Options)
-import Hyper.Request (class ReadableBody, class Request, class StreamableBody, RequestData, parseUrl, readBody)
-import Hyper.Response (class ResponseWritable, class Response)
+import Hyper.Request (class ReadableBody, class Request, class StreamableBody, RequestData, parseUrl)
+import Hyper.Response (class Response, class ResponseWritable)
 import Hyper.Status (Status(..))
 import Node.Buffer (Buffer)
 import Node.Buffer as Buffer
@@ -43,49 +43,63 @@ import Node.HTTP as HTTP
 import Node.Stream (Stream, Writable)
 import Node.Stream as Stream
 
+-- Note to self: this is the real 'runServer'. The other one is
+-- a temporary reduction until I specify monad transformers on top of
+-- the indexed monad
+-- runServer
+--   :: forall m (endingReqState :: RequestState)
+--    . IxMonad m
+--   => Options
+--   -> m (Conn BodyUnread StatusLineOpen) (Conn endingReqState ResponseEnded) Unit
+--   -> Effect Unit
+-- runServer = runServer' identity
 
-data HttpRequest (requestState :: RequestState)
-  = HttpRequest HTTP.Request RequestData
+runServer
+  :: forall (endingReqState :: RequestState)
+   . Options
+  -> Hyper (ReaderT HttpConn Aff) (Conn BodyUnread StatusLineOpen) (Conn endingReqState ResponseEnded) Unit
+  -> Effect Unit
+runServer options middleware = do
+  server <- HTTP.createServer onRequest
+  let listenOptions = { port: unwrap options.port
+                      , hostname: unwrap options.hostname
+                      , backlog: Nothing
+                      }
+  HTTP.listen server listenOptions (options.onListening options.hostname options.port)
+  where
+    onRequest :: HTTP.Request -> HTTP.Response -> Effect Unit
+    onRequest request response =
+      runAff_ callback (runReaderT (runHyper middleware) connection)
+      where
+        connection = { request: mkHttpRequest request, response }
 
+        callback :: Either Error _ -> Effect Unit
+        callback = case _ of
+          Left err -> options.onRequestError err
+          Right _ -> pure unit
 
-instance requestHttpRequest :: Monad m => Request HttpRequest m where
-  getRequestData = do
-    getConn :>>=
-      case _ of
-        { request: HttpRequest _ d } -> ipure d
+data HttpRequest = HttpRequest HTTP.Request RequestData
 
+type HttpConn = { request :: HttpRequest, response :: HTTP.Response }
 
--- A limited version of Writable () e, with which you can only write, not end,
--- the Stream.
-newtype NodeResponse m
-  = NodeResponse (Writable () -> m Unit)
-
-writeString :: forall m. MonadAff m => Encoding -> String -> NodeResponse m
-writeString enc str = NodeResponse $ \w ->
-  liftAff (makeAff (\k -> Stream.writeString w enc str (k (pure unit))
-                          *> pure nonCanceler))
-
-write :: forall m. MonadAff m => Buffer -> NodeResponse m
-write buffer = NodeResponse $ \w ->
-  liftAff (makeAff (\k -> Stream.write w buffer (k (pure unit))
-                          *> pure nonCanceler))
-
-instance stringNodeResponse :: MonadAff m => ResponseWritable (NodeResponse m) m String where
-  toResponse = ipure <<< writeString UTF8
-
-instance stringAndEncodingNodeResponse :: MonadAff m => ResponseWritable (NodeResponse m) m (Tuple String Encoding) where
-  toResponse (Tuple body encoding) =
-    ipure (writeString encoding body)
-
-instance bufferNodeResponse :: MonadAff m
-                                  => ResponseWritable (NodeResponse m) m Buffer where
-  toResponse buf =
-    ipure (write buf)
+mkHttpRequest :: HTTP.Request -> HttpRequest
+mkHttpRequest request =
+  HttpRequest request requestData
+  where
+    headers = HTTP.requestHeaders request
+    requestData =
+      { url: HTTP.requestURL request
+      , parsedUrl: defer \_ -> parseUrl (HTTP.requestURL request)
+      , headers: headers
+      , method: Method.fromString (HTTP.requestMethod request)
+      , contentLength: Object.lookup "content-length" headers
+                      >>= Int.fromString
+      }
 
 -- Helper function that reads a Stream into a Buffer, and throws error
 -- in `Aff` when failed.
 readBodyAsBuffer
-  :: HttpRequest BodyUnread
+  :: HttpRequest
   -> Aff Buffer
 readBodyAsBuffer (HttpRequest request _) = do
   let stream = HTTP.requestAsStream request
@@ -116,186 +130,123 @@ readBodyAsBuffer (HttpRequest request _) = do
         >>= flip put bodyResult
     concat' = liftEffect <<< Buffer.concat
 
-instance readableBodyHttpRequestString :: (Monad m, MonadAff m)
-                                       => ReadableBody HttpRequest m String where
-  readBody = Ix.do
-    buf <- readBody
+instance requestHyper :: (MonadAsk HttpConn m, MonadAff m) => Request (Hyper m) where
+  getRequestData
+    :: forall (reqState :: RequestState) (resState :: ResponseState)
+     . Hyper m (Conn reqState resState) (Conn reqState resState) RequestData
+  getRequestData = Hyper $ Indexed do
+    { request: HttpRequest _ d } <- ask
+    pure d
+
+  ignoreBody
+    :: forall (resState :: ResponseState)
+     . Hyper m (Conn BodyUnread resState) (Conn BodyRead resState) Unit
+  ignoreBody = Hyper $ Indexed (pure unit)
+
+instance readableBodyHyperBuffer :: (MonadAsk HttpConn m, MonadAff m) => ReadableBody (Hyper m) Buffer where
+  readBody
+    :: forall (resState :: ResponseState)
+     . Hyper m (Conn BodyUnread resState) (Conn BodyRead resState) Buffer
+  readBody = Hyper $ Indexed do
+    { request } <- ask
+    liftAff $ readBodyAsBuffer request
+else
+instance readableBodyHyperString :: (MonadAsk HttpConn m, MonadAff m) => ReadableBody (Hyper m) String where
+  readBody
+    :: forall (resState :: ResponseState)
+     . Hyper m (Conn BodyUnread resState) (Conn BodyRead resState) String
+  readBody = Hyper $ Indexed do
+    { request } <- ask
+    buf <- liftAff $ readBodyAsBuffer request
     liftEffect $ Buffer.toString UTF8 buf
 
-instance readableBodyHttpRequestBuffer :: (Monad m, MonadAff m)
-                                       => ReadableBody HttpRequest m Buffer where
-  readBody = Ix.do
-    conn <- getConn
-    body <- lift' (liftAff (readBodyAsBuffer conn.request))
-    let HttpRequest request reqData = conn.request
-    putConn (conn { request = HttpRequest request reqData })
-    ipure body
+instance streamableBodyHyper :: (MonadAsk HttpConn m, MonadAff m) => StreamableBody (Hyper m) m (Stream (read :: Stream.Read)) where
+  streamBody
+    :: forall (resState :: ResponseState)
+     . (Stream (read :: Stream.Read) -> m Unit)
+     -> Hyper m (Conn BodyUnread resState) (Conn BodyRead resState) Unit
+  streamBody useStream = Hyper $ Indexed do
+    { request: HttpRequest request _ } <- ask
+    useStream (HTTP.requestAsStream request)
 
-instance streamableBodyHttpRequestReadable :: MonadAff m
-                                           => StreamableBody
-                                              HttpRequest
-                                              m
-                                              (Stream (read :: Stream.Read)) where
-  streamBody useStream = Ix.do
-    conn <- getConn
-    let HttpRequest request reqData = conn.request
-    lift' (useStream (HTTP.requestAsStream request))
-    putConn (conn { request = HttpRequest request reqData })
+-- newtype WriterResponse rw r (resState :: ResponseState) =
+--   WriterResponse { writer :: rw | r }
+--
+-- getWriter :: forall req c m rw r reqState (resState :: ResponseState).
+--             Monad m =>
+--             NoTransition m req reqState (WriterResponse rw r) resState c rw
+-- getWriter = getConn <#> \{ response: WriterResponse rec } -> rec.writer
 
-newtype HttpResponse (resState :: ResponseState) = HttpResponse HTTP.Response
+-- A limited version of Writable () e, with which you can only write, not end,
+-- the Stream.
+newtype NodeResponse m
+  = NodeResponse (Writable () -> m Unit)
 
-newtype WriterResponse rw r (resState :: ResponseState) =
-  WriterResponse { writer :: rw | r }
+writeString :: forall m. MonadAff m => Encoding -> String -> NodeResponse m
+writeString enc str = NodeResponse $ \w ->
+  liftAff (makeAff (\k -> Stream.writeString w enc str (k (pure unit))
+                          *> pure nonCanceler))
 
-getWriter :: forall req c m rw r reqState (resState :: ResponseState).
-            Monad m =>
-            NoTransition m req reqState (WriterResponse rw r) resState c rw
-getWriter = getConn <#> \{ response: WriterResponse rec } -> rec.writer
+write :: forall m. MonadAff m => Buffer -> NodeResponse m
+write buffer = NodeResponse $ \w ->
+  liftAff (makeAff (\k -> Stream.write w buffer (k (pure unit))
+                          *> pure nonCanceler))
 
--- | Note: this `ResponseState` transition is technically illegal. It is
--- | only safe to use as part of the implementation of
--- | the Node server's implementation of the `Response`
--- | type class' function: `writeStatus`.
--- |
--- | The ending response resState should be `HeadersOpen`. However,
--- | if the second ResponseState is not StatusLineOpen,
--- | then we are forced to define the Middleware's instance
--- | of `MonadEffect` as
--- | ```
--- | (Monad m) => MonadEffect (Middleware m input output)`
--- | ```
--- | which erroneously allows one to change the ResponseState of `Conn`
--- | via `liftEffect`. Thus, we must define the instance as...
--- | ```
--- | (Monad m) => MonadEffect (Middleware m same same)
--- | ```
--- | which does NOT allow one to change the ResponseState.
-unsafeSetStatus :: forall req reqState (res :: ResponseState -> Type) c m
-                 . MonadEffect m
-                => Status
-                -> HTTP.Response
-                -> NoTransition m req reqState res StatusLineOpen c Unit
-unsafeSetStatus (Status { code, reasonPhrase }) r = liftEffect do
-  HTTP.setStatusCode r code
-  HTTP.setStatusMessage r reasonPhrase
+instance responseHyper :: (MonadAsk HttpConn m, MonadAff m) => Response (Hyper m) (NodeResponse m) where
+  writeStatus
+    :: forall (reqState :: RequestState)
+     . Status
+    -> Hyper m (Conn reqState StatusLineOpen) (Conn reqState HeadersOpen) Unit
+  writeStatus (Status { code, reasonPhrase }) = Hyper $ Indexed do
+    { response } <- ask
+    liftEffect do
+      HTTP.setStatusCode response code
+      HTTP.setStatusMessage response reasonPhrase
 
-writeHeader' :: forall req reqState res c m.
-               MonadEffect m
-             => (Tuple String String)
-             -> HTTP.Response
-             -> NoTransition m req reqState res HeadersOpen c Unit
-writeHeader' (Tuple name value) r =
-  liftEffect $ HTTP.setHeader r name value
+  writeHeader
+    :: forall (reqState :: RequestState)
+     . Header
+    -> Hyper m (Conn reqState HeadersOpen) (Conn reqState HeadersOpen) Unit
+  writeHeader (Tuple name value) = Hyper $ Indexed do
+    { response } <- ask
+    liftEffect $ HTTP.setHeader response name value
 
-writeResponse :: forall req reqState res c m.
-                MonadAff m
-             => HTTP.Response
-             -> NodeResponse m
-             -> NoTransition m req reqState res BodyOpen c Unit
-writeResponse r (NodeResponse f) =
-  lift' (f (HTTP.responseAsStream r))
+  closeHeaders
+    :: forall (reqState :: RequestState)
+     . Hyper m (Conn reqState HeadersOpen) (Conn reqState BodyOpen) Unit
+  closeHeaders = Hyper $ Indexed (pure unit)
 
--- Similar to the 'unsafeSetStatus' function, this is technically illegal.
--- It is only safe to use as part of the implementation of the Node server's
--- implementation of the `Response` type class
-unsafeEndResponse :: forall req reqState res c m.
-              MonadEffect m
-            => HTTP.Response
-            -> NoTransition m req reqState res BodyOpen c Unit
-unsafeEndResponse r =
-  liftEffect (Stream.end (HTTP.responseAsStream r) (pure unit))
+  send
+    :: forall (reqState :: RequestState)
+     . NodeResponse m
+    -> Hyper m (Conn reqState BodyOpen) (Conn reqState BodyOpen) Unit
+  send (NodeResponse f) = Hyper $ Indexed do
+    { response } <- ask
+    f (HTTP.responseAsStream response)
 
-instance responseWriterHttpResponse :: MonadAff m
-                                    => Response HttpResponse m (NodeResponse m) where
-  writeStatus status = Ix.do
-    conn <- getConn
-    let HttpResponse r = conn.response
-    unsafeSetStatus status r
-    putConn (conn { response = HttpResponse r })
+  end
+    :: forall (reqState :: RequestState)
+     . Hyper m (Conn reqState BodyOpen) (Conn reqState ResponseEnded) Unit
+  end = Hyper $ Indexed do
+    { response } <- ask
+    liftEffect (Stream.end (HTTP.responseAsStream response) (pure unit))
 
-  writeHeader header = Ix.do
-    conn <- getConn
-    let HttpResponse r = conn.response
-    writeHeader' header r
-    putConn (conn { response = HttpResponse r })
+instance responseWritableStringToNodeResponse :: MonadAff m => ResponseWritable (Hyper m) String (NodeResponse m) where
+  toResponse = Hyper <<< Indexed <<< pure <<< writeString UTF8
 
-  closeHeaders = Ix.do
-    conn <- getConn
-    let HttpResponse r = conn.response
-    putConn (conn { response = HttpResponse r })
+instance responseWritableStringEncodingToNodeResponse :: MonadAff m => ResponseWritable (Hyper m) (Tuple Encoding String) (NodeResponse m) where
+  toResponse (Tuple encoding body) = Hyper (Indexed (pure (writeString encoding body)))
 
-  send f = Ix.do
-    conn <- getConn
-    let HttpResponse r = conn.response
-    writeResponse r f
-    putConn (conn { response = HttpResponse r })
+instance responseWritableBufferToNodeResponse :: MonadAff m => ResponseWritable (Hyper m) Buffer (NodeResponse m) where
+  toResponse = Hyper <<< Indexed <<< pure <<< write
 
-  end = Ix.do
-    conn <- getConn
-    let HttpResponse r = conn.response
-    unsafeEndResponse r
-    putConn (conn { response = HttpResponse r })
+newtype Hyper m x y a = Hyper (Indexed m x y a)
 
+runHyper :: forall m x y a. Monad m => Hyper m x y a -> m a
+runHyper (Hyper (Indexed ma)) = ma
 
-mkHttpRequest :: HTTP.Request -> HttpRequest BodyUnread
-mkHttpRequest request =
-  HttpRequest request requestData
-  where
-    headers = HTTP.requestHeaders request
-    requestData =
-      { url: HTTP.requestURL request
-      , parsedUrl: defer \_ -> parseUrl (HTTP.requestURL request)
-      , headers: headers
-      , method: Method.fromString (HTTP.requestMethod request)
-      , contentLength: Object.lookup "content-length" headers
-                      >>= Int.fromString
-      }
-
-
-runServer'
-  :: forall m (endingReqState :: RequestState) c c'
-   . Functor m
-  => Options
-  -> c
-  -> (forall a. m a -> Aff a)
-  -> ConnTransition' m
-      HttpRequest BodyUnread endingReqState
-      HttpResponse StatusLineOpen ResponseEnded
-      c c'
-      Unit
-  -> Effect Unit
-runServer' options components runM middleware = do
-  server <- HTTP.createServer onRequest
-  let listenOptions = { port: unwrap options.port
-                      , hostname: unwrap options.hostname
-                      , backlog: Nothing
-                      }
-  HTTP.listen server listenOptions (options.onListening options.hostname options.port)
-  where
-    onRequest :: HTTP.Request -> HTTP.Response -> Effect Unit
-    onRequest request response =
-      let conn = { request: mkHttpRequest request
-                 , response: HttpResponse response
-                 , components: components
-                 }
-          callback =
-            case _ of
-              Left err -> options.onRequestError err
-              Right _ -> pure unit
-      in conn
-         # evalMiddleware middleware
-         # runM
-         # runAff_ callback
-
-runServer
-  :: forall (endingReqState :: RequestState) c c'.
-     Options
-  -> c
-  -> ConnTransition' Aff
-      HttpRequest BodyUnread endingReqState
-      HttpResponse StatusLineOpen ResponseEnded
-      c c'
-      Unit
-  -> Effect Unit
-runServer options components middleware =
-  runServer' options components identity middleware
+derive newtype instance ixFunctorHyper ∷ Functor m ⇒ IxFunctor (Hyper m)
+derive newtype instance ixApplyHyper ∷ Apply m ⇒ IxApply (Hyper m)
+derive newtype instance ixApplicativeHyper ∷ Applicative m ⇒ IxApplicative (Hyper m)
+derive newtype instance ixBindHyper ∷ Bind m ⇒ IxBind (Hyper m)
+derive newtype instance ixMonadHyper ∷ Monad m ⇒ IxMonad (Hyper m)
