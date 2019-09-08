@@ -2,76 +2,78 @@ module Hyper.Response where
 
 import Prelude
 
-import Control.Monad.Indexed ((:>>=), (:*>))
-import Data.Foldable (class Foldable, traverse_)
+import Control.Monad.Indexed.Qualified as Ix
+import Control.Monad.Indexed (class IxMonad)
 import Data.MediaType (MediaType)
 import Data.Newtype (unwrap)
 import Data.Tuple (Tuple(Tuple))
-import Hyper.Conn (BodyOpen, HeadersOpen, NoTransition, ResponseEnded, ResponseTransition, StatusLineOpen, kind ResponseState)
+import Hyper.Conn (Conn, BodyOpen, HeadersOpen, ResponseEnded, StatusLineOpen, kind ResponseState)
 import Hyper.Header (Header)
-import Hyper.Middleware (Middleware)
 import Hyper.Status (Status, statusFound)
 
 -- | The operations that a response writer, provided by the server backend,
 -- | must support.
-class Response (res :: ResponseState -> Type) m b | res -> b where
+class Response m body | m -> body where
   writeStatus
-    :: forall req reqState comp
+    :: forall reqState
      . Status
-    -> ResponseTransition m req reqState res StatusLineOpen HeadersOpen comp Unit
+    -> m (Conn reqState StatusLineOpen) (Conn reqState HeadersOpen) Unit
   writeHeader
-    :: forall req reqState comp
+    :: forall reqState
      . Header
-    -> NoTransition m req reqState res HeadersOpen comp Unit
+    -> m (Conn reqState HeadersOpen) (Conn reqState HeadersOpen) Unit
   closeHeaders
-    :: forall req reqState comp
-     . ResponseTransition m req reqState res HeadersOpen BodyOpen comp Unit
+    :: forall reqState
+     . m (Conn reqState HeadersOpen) (Conn reqState BodyOpen) Unit
   send
-    :: forall req reqState comp
-     . b
-    -> NoTransition m req reqState res BodyOpen comp Unit
+    :: forall reqState
+     . body
+    -> m (Conn reqState BodyOpen) (Conn reqState BodyOpen) Unit
   end
-    :: forall req reqState comp
-     . ResponseTransition m req reqState res BodyOpen ResponseEnded comp Unit
+    :: forall reqState
+     . m (Conn reqState BodyOpen) (Conn reqState ResponseEnded) Unit
 
-headers
-  :: forall f m req reqState (res :: ResponseState -> Type) b comp
-  .  Foldable f
-  => Monad m
-  => Response res m b
-  => f Header
-  -> ResponseTransition m req reqState res HeadersOpen BodyOpen comp Unit
-headers hs =
-  traverse_ writeHeader hs
-  :*> closeHeaders
+-- headers
+--   :: forall f m reqState body
+--   .  Foldable f
+--   => IxMonad m
+--   => Response m body
+--   => f Header
+--   -> m (Conn reqState HeadersOpen) (Conn reqState BodyOpen) Unit
+-- headers hs =
+--   traverse_ writeHeader hs
+--   :*> closeHeaders
 
 contentType
-  :: forall m req reqState (res :: ResponseState -> Type) b comp
-  .  Monad m
-  => Response res m b
-   => MediaType
-   -> NoTransition m req reqState res HeadersOpen comp Unit
+  :: forall m reqState body
+  .  IxMonad m
+  => Response m body
+  => MediaType
+  -> m (Conn reqState HeadersOpen) (Conn reqState HeadersOpen) Unit
 contentType mediaType =
   writeHeader (Tuple "Content-Type" (unwrap mediaType))
 
 redirect
-  :: forall m req reqState (res :: ResponseState -> Type) b comp
-  .  Monad m
-  => Response res m b
+  :: forall m reqState body
+  .  IxMonad m
+  => Response m body
   => String
-  -> ResponseTransition m req reqState res StatusLineOpen HeadersOpen comp Unit
-redirect uri =
+  -> m (Conn reqState StatusLineOpen) (Conn reqState HeadersOpen) Unit
+redirect uri = Ix.do
   writeStatus statusFound
-  :*> writeHeader (Tuple "Location" uri)
+  writeHeader (Tuple "Location" uri)
 
-class ResponseWritable b m r where
-  toResponse :: forall i. r -> Middleware m i i b
+class ResponseWritable m responseData body where
+  toResponse :: forall i. responseData -> m i i body
 
 respond
-  :: forall m r b req reqState (res :: ResponseState -> Type) comp
-  .  Monad m
-  => ResponseWritable b m r
-  => Response res m b
+  :: forall m r body reqState
+  .  IxMonad m
+  => ResponseWritable m r body
+  => Response m body
   => r
-  -> ResponseTransition m req reqState res BodyOpen ResponseEnded comp Unit
-respond r = (toResponse r :>>= send) :*> end
+  -> m (Conn reqState BodyOpen) (Conn reqState ResponseEnded) Unit
+respond r = Ix.do
+  resp <- toResponse r
+  send resp
+  end
