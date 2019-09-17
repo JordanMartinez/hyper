@@ -2,8 +2,12 @@ module Hyper.Response where
 
 import Prelude
 
-import Control.Monad.Indexed.Qualified as Ix
 import Control.Monad.Indexed (class IxMonad)
+import Control.Monad.Indexed.Qualified as Ix
+import Control.Monad.Indexed.Reader.Trans (IxReaderT)
+import Control.Monad.Indexed.State.Trans (IxStateT)
+import Control.Monad.Indexed.Trans.Class (ilift)
+import Control.Monad.Indexed.Writer.Trans (IxWriterT)
 import Data.MediaType (MediaType)
 import Data.Newtype (unwrap)
 import Data.Tuple (Tuple(Tuple))
@@ -32,6 +36,28 @@ class Response m body | m -> body where
   end
     :: forall reqState
      . m (Conn reqState BodyOpen) (Conn reqState ResponseEnded) Unit
+
+instance responseIxMonadReaderT :: (IxMonad m, Response m body) => Response (IxReaderT r m) body where
+    writeStatus = ilift <<< writeStatus
+    writeHeader = ilift <<< writeHeader
+    closeHeaders = ilift closeHeaders
+    send = ilift <<< send
+    end = ilift end
+
+instance responseIxMonadStateT :: (IxMonad m, Response m body) => Response (IxStateT r m) body where
+    writeStatus = ilift <<< writeStatus
+    writeHeader = ilift <<< writeHeader
+    closeHeaders = ilift closeHeaders
+    send = ilift <<< send
+    end = ilift end
+
+instance responseIxMonadWriterT :: (Monoid w, IxMonad m, Response m body) => Response (IxWriterT w m) body where
+    writeStatus = ilift <<< writeStatus
+    writeHeader = ilift <<< writeHeader
+    closeHeaders = ilift closeHeaders
+    send = ilift <<< send
+    end = ilift end
+
 
 -- headers
 --   :: forall f m reqState body
@@ -63,8 +89,17 @@ redirect uri = Ix.do
   writeStatus statusFound
   writeHeader (Tuple "Location" uri)
 
-class ResponseWritable m responseData body where
+class ResponseWritable m responseData body | m responseData -> body where
   toResponse :: forall i. responseData -> m i i body
+
+instance responseWritableIxMonadReaderT :: (IxMonad m, ResponseWritable m r body) => ResponseWritable (IxReaderT rr m) r body where
+  toResponse = ilift <<< toResponse
+
+instance responseWritableIxMonadStateT :: (IxMonad m, ResponseWritable m r body) => ResponseWritable (IxStateT s m) r body where
+  toResponse = ilift <<< toResponse
+
+instance responseWritableIxMonadWriterT :: (Monoid w, IxMonad m, ResponseWritable m r body) => ResponseWritable (IxWriterT w m) r body where
+  toResponse = ilift <<< toResponse
 
 respond
   :: forall m r body reqState

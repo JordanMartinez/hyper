@@ -1,6 +1,6 @@
 module Hyper.Node.Server
        ( HttpRequest
-
+       , HttpConn
        -- don't export constructor so users can't end stream prematurely
        , NodeResponse
 
@@ -10,12 +10,13 @@ module Hyper.Node.Server
        , write
        , module Hyper.Node.Server.Options
        , runServer
-       -- , runServer'
+       , runServer'
        ) where
 
 import Prelude
 
 import Control.Monad.Error.Class (throwError)
+import Control.Monad.Indexed (class IxApplicative, class IxApply, class IxBind, class IxFunctor, class IxMonad)
 import Control.Monad.Reader (ReaderT, ask, runReaderT)
 import Data.Either (Either(..), either)
 import Data.HTTP.Method as Method
@@ -29,7 +30,9 @@ import Effect (Effect)
 import Effect.Aff (Aff, launchAff, launchAff_, makeAff, nonCanceler, runAff_)
 import Effect.Aff.AVar (empty, new, put, take)
 import Effect.Aff.Class (class MonadAff, liftAff)
-import Effect.Class (liftEffect)
+import Effect.Aff.Indexed.Class (class IxMonadAff)
+import Effect.Class (class MonadEffect, liftEffect)
+import Effect.Indexed.Class (class IxMonadEffect)
 import Effect.Exception (catchException)
 import Foreign.Object as Object
 import Hyper.Conn (BodyUnread, Conn, ResponseEnded, StatusLineOpen, kind RequestState)
@@ -45,14 +48,21 @@ import Node.HTTP as HTTP
 import Node.Stream (Stream, Writable)
 import Node.Stream as Stream
 
-
 runServer
-  :: forall m (endingReqState :: RequestState)
-   . Functor m
-  => Options
+  :: forall (endingReqState :: RequestState)
+   . Options
   -> Hyper Aff (Conn BodyUnread StatusLineOpen) (Conn endingReqState ResponseEnded) Unit
   -> Effect Unit
-runServer options middleware = do
+runServer = runServer' identity
+
+runServer'
+  :: forall (endingReqState :: RequestState) m
+   . IxMonad m
+  => (m (Conn BodyUnread StatusLineOpen) (Conn endingReqState ResponseEnded) ~> Hyper Aff (Conn BodyUnread StatusLineOpen) (Conn endingReqState ResponseEnded))
+  -> Options
+  -> m (Conn BodyUnread StatusLineOpen) (Conn endingReqState ResponseEnded) Unit
+  -> Effect Unit
+runServer' runApp options middleware = do
   server <- HTTP.createServer onRequest
   let listenOptions = { port: unwrap options.port
                       , hostname: unwrap options.hostname
@@ -62,7 +72,7 @@ runServer options middleware = do
   where
     onRequest :: HTTP.Request -> HTTP.Response -> Effect Unit
     onRequest request response =
-      runAff_ callback (runHyper middleware conn)
+      runAff_ callback (runHyper (runApp middleware) conn)
       where
         conn = HttpConn { request: mkHttpRequest request
                         , response: response
@@ -154,12 +164,26 @@ readBodyAsBuffer (HttpRequest request _) = do
 newtype Hyper m from to a =
   Hyper (Indexed (ReaderT HttpConn m) from to a)
 
+derive newtype instance functorHyper :: Functor m => Functor (Hyper m x x)
+derive newtype instance applyHyper :: Apply m => Apply (Hyper m x x)
+derive newtype instance applicativeHyper :: Applicative m => Applicative (Hyper m x x)
+derive newtype instance bindHyper :: Bind m => Bind (Hyper m x x)
+derive newtype instance monadHyper :: Monad m => Monad (Hyper m x x)
+
+derive newtype instance ixFunctorHyper :: Functor m => IxFunctor (Hyper m)
+derive newtype instance ixApplyHyper :: Apply m => IxApply (Hyper m)
+derive newtype instance ixApplicativeHyper :: Applicative m => IxApplicative (Hyper m)
+derive newtype instance ixBindHyper :: Bind m => IxBind (Hyper m)
+derive newtype instance ixMonad :: Monad m => IxMonad (Hyper m)
+derive newtype instance ixMonadEffect :: MonadEffect m => IxMonadEffect (Hyper m)
+derive newtype instance ixMonadAff :: MonadAff m => IxMonadAff (Hyper m)
+
 runHyper :: forall m fromReq fromRes toReq toRes a
           . Hyper m (Conn fromReq fromRes) (Conn toReq toRes) a
          -> HttpConn -> m a
 runHyper (Hyper (Indexed readerT)) conn = runReaderT readerT conn
 
-instance requestHttpRequest :: Monad m => Request (Hyper m) where
+instance requestHyper :: Monad m => Request (Hyper m) where
   getRequestData = Hyper $ Indexed do
     HttpConn { request: HttpRequest _ d } <- ask
     pure d
@@ -172,13 +196,13 @@ instance readableBodyHttpRequestString :: (MonadAff m)
     buf <- liftAff (readBodyAsBuffer request)
     liftEffect $ Buffer.toString UTF8 buf
 else
-instance readableBodyHttpRequestBuffer :: (MonadAff m)
+instance readableBodyHyperBuffer :: (MonadAff m)
                                        => ReadableBody (Hyper m) Buffer where
   readBody = Hyper $ Indexed do
     HttpConn { request } <- ask
     liftAff (readBodyAsBuffer request)
 
-instance streamableBodyHttpRequestReadable :: MonadAff m
+instance streamableBodyHperAffStream :: MonadAff m
                                            => StreamableBody
                                               (Hyper m)
                                               Aff
@@ -187,7 +211,7 @@ instance streamableBodyHttpRequestReadable :: MonadAff m
     HttpConn { request: HttpRequest request _ } <- ask
     liftAff (useStream (HTTP.requestAsStream request))
 
-instance responseWriterHttpResponse :: MonadAff m
+instance responseWriterHyperNodeResponse :: MonadAff m
                                     => Response (Hyper m) (NodeResponse (ReaderT HttpConn m)) where
   writeStatus (Status { code, reasonPhrase }) = Hyper $ Indexed do
     HttpConn { response } <- ask
@@ -209,7 +233,6 @@ instance responseWriterHttpResponse :: MonadAff m
     HttpConn { response } <- ask
     liftEffect (Stream.end (HTTP.responseAsStream response) (pure unit))
 
-
 instance stringNodeResponse :: MonadAff m => ResponseWritable (Hyper m) String (NodeResponse (ReaderT HttpConn m)) where
   toResponse str = Hyper $ Indexed do
     pure (writeString UTF8 str)
@@ -218,7 +241,6 @@ instance stringAndEncodingNodeResponse :: MonadAff m => ResponseWritable (Hyper 
   toResponse (Tuple encoding body) = Hyper $ Indexed do
     pure (writeString encoding body)
 
-instance bufferNodeResponse :: MonadAff m
-                                  => ResponseWritable (Hyper m) Buffer (NodeResponse (ReaderT HttpConn m)) where
+instance bufferNodeResponse :: MonadAff m => ResponseWritable (Hyper m) Buffer (NodeResponse (ReaderT HttpConn m)) where
   toResponse buf = Hyper $ Indexed do
     pure (write buf)
