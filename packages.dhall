@@ -10,10 +10,46 @@ let overrides =
           //  { repo =
                   "https://github.com/JordanMartinez/purescript-indexed-monad.git"
               , version =
-                  "qualifiedDoForIndexed"
+                  "withMonadInstances"
               }
       }
 
-let additions = {=}
+let additions =
+    { indexed-transformers =
+        { dependencies =  [ "arrays"
+                          , "console"
+                          , "control"
+                          , "distributive"
+                          , "effect"
+                          , "either"
+                          , "exceptions"
+                          , "foldable-traversable"
+                          , "indexed-monad"
+                          , "identity"
+                          , "lazy"
+                          , "maybe"
+                          , "newtype"
+                          , "prelude"
+                          , "psci-support"
+                          , "tailrec"
+                          , "tuples"
+                          , "unfoldable"
+                          ]
+         , repo = "https://github.com/JordanMartinez/purescript-transformers.git"
+         , version = "indexed-transformers"
+         }
+    , indexed-effect =
+        { dependencies =
+            [ "effect", "prelude", "psci-support", "indexed-monad" ]
+        , repo = "https://github.com/JordanMartinez/purescript-indexed-effect.git"
+        , version = "master"
+        }
+    , indexed-aff =
+        { dependencies =
+            [ "aff", "effect", "prelude", "psci-support", "indexed-monad" ]
+        , repo = "https://github.com/JordanMartinez/purescript-indexed-aff.git"
+        , version = "master"
+        }
+    }
 
 in  upstream // overrides // additions
