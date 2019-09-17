@@ -21,8 +21,7 @@ import Control.Monad.Reader (ReaderT, ask, runReaderT)
 import Data.Either (Either(..), either)
 import Data.HTTP.Method as Method
 import Data.Indexed (Indexed(..))
-import Data.Int as Int
-import Data.Lazy (defer)
+import Data.IndexedNaturalTransformation (type (~~>))
 import Data.Maybe (Maybe(..))
 import Data.Newtype (unwrap)
 import Data.Tuple (Tuple(..))
@@ -34,11 +33,10 @@ import Effect.Aff.Indexed.Class (class IxMonadAff)
 import Effect.Class (class MonadEffect, liftEffect)
 import Effect.Indexed.Class (class IxMonadEffect)
 import Effect.Exception (catchException)
-import Foreign.Object as Object
-import Hyper.Conn (BodyUnread, Conn, ResponseEnded, StatusLineOpen, kind RequestState)
+import Hyper.Conn (BodyUnread, type (&), ResponseEnded, StatusLineOpen, kind RequestState)
 import Hyper.Node.Server.Options (Hostname(..), Options, Port(..), defaultOptions, defaultOptionsWithLogging) as Hyper.Node.Server.Options
 import Hyper.Node.Server.Options (Options)
-import Hyper.Request (class ReadableBody, class Request, class StreamableBody, RequestData, parseUrl)
+import Hyper.Request (class ReadableBody, class Request, class StreamableBody, RequestData)
 import Hyper.Response (class ResponseWritable, class Response)
 import Hyper.Status (Status(..))
 import Node.Buffer (Buffer)
@@ -51,16 +49,16 @@ import Node.Stream as Stream
 runServer
   :: forall (endingReqState :: RequestState)
    . Options
-  -> Hyper Aff (Conn BodyUnread StatusLineOpen) (Conn endingReqState ResponseEnded) Unit
+  -> Hyper Aff (BodyUnread & StatusLineOpen) (endingReqState & ResponseEnded) Unit
   -> Effect Unit
 runServer = runServer' identity
 
 runServer'
   :: forall (endingReqState :: RequestState) m
    . IxMonad m
-  => (m (Conn BodyUnread StatusLineOpen) (Conn endingReqState ResponseEnded) ~> Hyper Aff (Conn BodyUnread StatusLineOpen) (Conn endingReqState ResponseEnded))
+  => (m ~~> Hyper Aff)
   -> Options
-  -> m (Conn BodyUnread StatusLineOpen) (Conn endingReqState ResponseEnded) Unit
+  -> m (BodyUnread & StatusLineOpen) (endingReqState & ResponseEnded) Unit
   -> Effect Unit
 runServer' runApp options middleware = do
   server <- HTTP.createServer onRequest
@@ -97,11 +95,8 @@ mkHttpRequest request =
     headers = HTTP.requestHeaders request
     requestData =
       { url: HTTP.requestURL request
-      , parsedUrl: defer \_ -> parseUrl (HTTP.requestURL request)
       , headers: headers
       , method: Method.fromString (HTTP.requestMethod request)
-      , contentLength: Object.lookup "content-length" headers
-                      >>= Int.fromString
       }
 
 -- A limited version of Writable () e, with which you can only write, not end,
@@ -179,7 +174,7 @@ derive newtype instance ixMonadEffect :: MonadEffect m => IxMonadEffect (Hyper m
 derive newtype instance ixMonadAff :: MonadAff m => IxMonadAff (Hyper m)
 
 runHyper :: forall m fromReq fromRes toReq toRes a
-          . Hyper m (Conn fromReq fromRes) (Conn toReq toRes) a
+          . Hyper m (fromReq & fromRes) (toReq & toRes) a
          -> HttpConn -> m a
 runHyper (Hyper (Indexed readerT)) conn = runReaderT readerT conn
 

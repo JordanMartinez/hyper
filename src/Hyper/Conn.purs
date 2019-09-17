@@ -41,3 +41,5 @@ foreign import data BodyOpen :: ResponseState
 foreign import data ResponseEnded :: ResponseState
 
 data Conn (requestState :: RequestState) (responseState :: ResponseState)
+
+infixr 6 type Conn as &

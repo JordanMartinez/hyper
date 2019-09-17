@@ -11,7 +11,7 @@ import Control.Monad.Indexed.Writer.Trans (IxWriterT)
 import Data.MediaType (MediaType)
 import Data.Newtype (unwrap)
 import Data.Tuple (Tuple(Tuple))
-import Hyper.Conn (Conn, BodyOpen, HeadersOpen, ResponseEnded, StatusLineOpen, kind ResponseState)
+import Hyper.Conn (type (&), BodyOpen, HeadersOpen, ResponseEnded, StatusLineOpen, kind ResponseState)
 import Hyper.Header (Header)
 import Hyper.Status (Status, statusFound)
 
@@ -21,21 +21,21 @@ class Response m body | m -> body where
   writeStatus
     :: forall reqState
      . Status
-    -> m (Conn reqState StatusLineOpen) (Conn reqState HeadersOpen) Unit
+    -> m (reqState & StatusLineOpen) (reqState & HeadersOpen) Unit
   writeHeader
     :: forall reqState
      . Header
-    -> m (Conn reqState HeadersOpen) (Conn reqState HeadersOpen) Unit
+    -> m (reqState & HeadersOpen) (reqState & HeadersOpen) Unit
   closeHeaders
     :: forall reqState
-     . m (Conn reqState HeadersOpen) (Conn reqState BodyOpen) Unit
+     . m (reqState & HeadersOpen) (reqState & BodyOpen) Unit
   send
     :: forall reqState
      . body
-    -> m (Conn reqState BodyOpen) (Conn reqState BodyOpen) Unit
+    -> m (reqState & BodyOpen) (reqState & BodyOpen) Unit
   end
     :: forall reqState
-     . m (Conn reqState BodyOpen) (Conn reqState ResponseEnded) Unit
+     . m (reqState & BodyOpen) (reqState & ResponseEnded) Unit
 
 instance responseIxMonadReaderT :: (IxMonad m, Response m body) => Response (IxReaderT r m) body where
     writeStatus = ilift <<< writeStatus
@@ -75,7 +75,7 @@ contentType
   .  IxMonad m
   => Response m body
   => MediaType
-  -> m (Conn reqState HeadersOpen) (Conn reqState HeadersOpen) Unit
+  -> m (reqState & HeadersOpen) (reqState & HeadersOpen) Unit
 contentType mediaType =
   writeHeader (Tuple "Content-Type" (unwrap mediaType))
 
@@ -84,7 +84,7 @@ redirect
   .  IxMonad m
   => Response m body
   => String
-  -> m (Conn reqState StatusLineOpen) (Conn reqState HeadersOpen) Unit
+  -> m (reqState & StatusLineOpen) (reqState & HeadersOpen) Unit
 redirect uri = Ix.do
   writeStatus statusFound
   writeHeader (Tuple "Location" uri)
@@ -107,7 +107,7 @@ respond
   => ResponseWritable m r body
   => Response m body
   => r
-  -> m (Conn reqState BodyOpen) (Conn reqState ResponseEnded) Unit
+  -> m (reqState & BodyOpen) (reqState & ResponseEnded) Unit
 respond r = Ix.do
   resp <- toResponse r
   send resp
