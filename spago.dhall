@@ -22,6 +22,7 @@
     , "node-fs-aff"
     , "node-http"
     , "ordered-collections"
+    , "profunctor-lenses"
     , "proxy"
     , "psci-support"
     , "random"
@@ -31,6 +32,7 @@
     , "spec-discovery"
     , "strings"
     , "transformers"
+    , "unordered-collections"
     ]
 , packages =
     ./packages.dhall
