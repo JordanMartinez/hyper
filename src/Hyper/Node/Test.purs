@@ -13,6 +13,7 @@ import Hyper.Conn (type (&))
 import Hyper.Request (class ReadableBody, class Request)
 import Hyper.Response (class Response)
 import Hyper.Test.Types (TestRequest(..), TestResponse, _responseBody, _responseHeaders, _status)
+import Node.Buffer (Buffer)
 
 newtype TestServer body from to a =
   TestServer (Indexed (StateT (TestResponse body) (Reader TestRequest)) from to a)
@@ -49,7 +50,21 @@ instance readableBodyTestServerString :: ReadableBody (TestServer String) String
     TestRequest request <- ask
     pure request.body
 
-instance responseWriterTestResponse :: Response (TestServer (Array b)) b where
+instance responseTestServerArrayBuffer :: Response (TestServer (Array Buffer)) Buffer where
+  writeStatus status = TestServer $ Indexed do
+    modify_ (set (_status <<< _Just) status)
+
+  writeHeader header = TestServer $ Indexed do
+    modify_ (over _responseHeaders (_ `snoc` header))
+
+  closeHeaders = TestServer $ Indexed (pure unit)
+
+  send chunk = TestServer $ Indexed do
+    modify_ (over _responseBody (_ `snoc` chunk))
+
+  end = TestServer $ Indexed (pure unit)
+else
+instance responseTestServerArrayB :: Response (TestServer (Array b)) b where
   writeStatus status = TestServer $ Indexed do
     modify_ (set (_status <<< _Just) status)
 
