@@ -11,9 +11,9 @@ import Data.String (Pattern(..), split)
 import Data.Tuple (Tuple(Tuple))
 import Effect.Aff.Indexed.Class (class IxMonadAff, iliftAff)
 import Effect.Indexed.Class (iliftEffect)
-import Hyper.Conn (type (&), ResponseEnded, StatusLineOpen, kind RequestState, kind ResponseState)
+import Hyper.Conn (type (&), HeadersOpen, ResponseEnded, StatusLineOpen, kind RequestState, kind ResponseState)
 import Hyper.Request (class Request, getRequestData)
-import Hyper.Response (class Response, class ResponseWritable, closeHeaders, end, send, toResponse, writeHeader, writeStatus)
+import Hyper.Response (class Response, class ResponseWritable, end, headers, send, toResponse, writeStatus)
 import Hyper.Status (statusOK)
 import Node.Buffer (Buffer)
 import Node.Buffer as Buffer
@@ -114,6 +114,7 @@ serveFile
   :: forall m (req :: RequestState) b
   .  IxMonad m
   => IxMonadAff m
+  => Applicative (m (req & HeadersOpen) (req & HeadersOpen))
   => ResponseWritable m Buffer b
   => Response m b
   => FilePath
@@ -124,6 +125,7 @@ serveFile'
   :: forall m (req :: RequestState) b
   .  IxMonad m
   => IxMonadAff m
+  => Applicative (m (req & HeadersOpen) (req & HeadersOpen))
   => ResponseWritable m Buffer b
   => Response m b
   => Map String String
@@ -136,9 +138,9 @@ serveFile' htaccessMap path = Ix.do
   buf <- iliftAff (readFile path)
   contentLength <- iliftEffect (Buffer.size buf)
   writeStatus statusOK
-  writeHeader $ Tuple "Content-Type" (contentType <> "; charset=utf-8")
-  writeHeader $ Tuple "Content-Length" (show contentLength)
-  closeHeaders
+  headers [ Tuple "Content-Type" (contentType <> "; charset=utf-8")
+          , Tuple "Content-Length" (show contentLength)
+          ]
   response <- toResponse buf
   send response
   end
@@ -147,6 +149,7 @@ fileServer
   :: forall m (req :: RequestState) b
   .  IxMonad m
   => IxMonadAff m
+  => Applicative (m (req & HeadersOpen) (req & HeadersOpen))
   => Request m
   => ResponseWritable m Buffer b
   => Response m b
@@ -160,6 +163,7 @@ fileServer'
   :: forall m (req :: RequestState) b
   .  IxMonad m
   => IxMonadAff m
+  => Applicative (m (req & HeadersOpen) (req & HeadersOpen))
   => Request m
   => ResponseWritable m Buffer b
   => Response m b
