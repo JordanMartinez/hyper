@@ -7,7 +7,7 @@ import Data.HTTP.Method (CustomMethod, Method(..))
 import Data.Lens (Lens')
 import Data.Lens.Iso.Newtype (_Newtype)
 import Data.Lens.Record (prop)
-import Data.Maybe (Maybe)
+import Data.Maybe (Maybe(..))
 import Data.Newtype (class Newtype)
 import Data.Symbol (SProxy(..))
 import Foreign.Object (Object, empty)
@@ -52,6 +52,13 @@ newtype TestResponse body
                  , body :: body
                  }
 derive instance newtypeTestResponse :: Newtype (TestResponse body) _
+
+emptyResponse :: forall b. TestResponse (Array b)
+emptyResponse =
+  TestResponse { status: Nothing
+               , headers: []
+               , body: []
+               }
 
 _status :: forall b. Lens' (TestResponse b) (Maybe Status)
 _status = _Newtype <<< prop (SProxy :: SProxy "status")
