@@ -8,6 +8,7 @@ import Control.Monad.Indexed.Reader.Trans (IxReaderT)
 import Control.Monad.Indexed.State.Trans (IxStateT)
 import Control.Monad.Indexed.Trans.Class (ilift)
 import Control.Monad.Indexed.Writer.Trans (IxWriterT)
+import Data.Foldable (class Foldable, traverse_)
 import Data.MediaType (MediaType)
 import Data.Newtype (unwrap)
 import Data.Tuple (Tuple(Tuple))
@@ -59,16 +60,17 @@ instance responseIxMonadWriterT :: (Monoid w, IxMonad m, Response m body) => Res
     end = ilift end
 
 
--- headers
---   :: forall f m reqState body
---   .  Foldable f
---   => IxMonad m
---   => Response m body
---   => f Header
---   -> m (Conn reqState HeadersOpen) (Conn reqState BodyOpen) Unit
--- headers hs =
---   traverse_ writeHeader hs
---   :*> closeHeaders
+headers
+  :: forall f m reqState body
+  .  Foldable f
+  => IxMonad m
+  => Applicative (m (reqState & HeadersOpen) (reqState & HeadersOpen))
+  => Response m body
+  => f Header
+  -> m (reqState & HeadersOpen) (reqState & BodyOpen) Unit
+headers hs = Ix.do
+  traverse_ writeHeader hs
+  closeHeaders
 
 contentType
   :: forall m reqState body
