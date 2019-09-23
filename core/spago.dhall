@@ -1,13 +1,9 @@
 { sources =
     [ "src/**/*.purs" ]
 , name =
-    "hyper"
+    "hyper-core"
 , dependencies =
     [ "aff"
-    , "argonaut"
-    , "arrays"
-    , "avar"
-    , "console"
     , "control"
     , "effect"
     , "foldable-traversable"
@@ -18,21 +14,12 @@
     , "indexed-monad"
     , "indexed-transformers"
     , "media-types"
-    , "node-buffer"
-    , "node-fs-aff"
-    , "node-http"
-    , "ordered-collections"
     , "profunctor-lenses"
     , "proxy"
     , "psci-support"
-    , "random"
     , "record-extra"
-    , "smolder"
-    , "spec"
-    , "spec-discovery"
     , "strings"
     , "transformers"
-    , "unordered-collections"
     ]
 , packages =
     ../packages.dhall

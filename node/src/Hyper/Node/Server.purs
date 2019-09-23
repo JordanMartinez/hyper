@@ -157,6 +157,10 @@ derive newtype instance applyHyper :: Apply (Hyper x x)
 derive newtype instance applicativeHyper :: Applicative (Hyper x x)
 derive newtype instance bindHyper :: Bind (Hyper x x)
 derive newtype instance monadHyper :: Monad (Hyper x x)
+instance monadEffectHyper :: MonadEffect (Hyper x x) where
+  liftEffect = Hyper <<< Indexed <<< liftEffect
+instance monadAffHyper :: MonadAff (Hyper x x) where
+  liftAff = Hyper <<< Indexed <<< liftAff
 
 derive newtype instance ixFunctorHyper :: IxFunctor Hyper
 derive newtype instance ixApplyHyper :: IxApply Hyper

@@ -50,6 +50,8 @@ let additions =
         , repo = "https://github.com/JordanMartinez/purescript-indexed-aff.git"
         , version = "master"
         }
+    , hyper-core = ./core/spago.dhall as Location
+    , hyper-node = ./node/spago.dhall as Location
     }
 
 in  upstream // overrides // additions
