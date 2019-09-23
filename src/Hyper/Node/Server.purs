@@ -22,15 +22,16 @@ import Data.HTTP.Method as Method
 import Data.Indexed (Indexed(..))
 import Data.Maybe (Maybe(..))
 import Data.Newtype (unwrap)
+import Data.Options as Options
 import Data.Tuple (Tuple(..))
 import Effect (Effect)
-import Effect.Aff (Aff, launchAff, launchAff_, makeAff, nonCanceler, runAff_)
+import Effect.Aff (Aff, Error, launchAff, launchAff_, makeAff, nonCanceler, runAff_)
 import Effect.Aff.AVar (empty, new, put, take)
 import Effect.Aff.Class (class MonadAff, liftAff)
 import Effect.Aff.Indexed.Class (class IxMonadAff)
 import Effect.Class (class MonadEffect, liftEffect)
-import Effect.Indexed.Class (class IxMonadEffect)
 import Effect.Exception (catchException)
+import Effect.Indexed.Class (class IxMonadEffect)
 import Hyper.Conn (BodyUnread, type (&), ResponseEnded, StatusLineOpen, kind RequestState)
 import Hyper.Node.Server.Options (Hostname(..), Options, Port(..), defaultOptions, defaultOptionsWithLogging) as Hyper.Node.Server.Options
 import Hyper.Node.Server.Options (Options)
@@ -41,8 +42,26 @@ import Node.Buffer (Buffer)
 import Node.Buffer as Buffer
 import Node.Encoding (Encoding(..))
 import Node.HTTP as HTTP
+import Node.HTTP.Secure (SSLOptions)
+import Node.HTTP.Secure as HTTPS
 import Node.Stream (Stream, Writable)
 import Node.Stream as Stream
+
+onHttpRequest
+  :: forall (endingReqState :: RequestState)
+   . (Error -> Effect Unit)
+  -> Hyper Aff (BodyUnread & StatusLineOpen) (endingReqState & ResponseEnded) Unit
+  -> HTTP.Request
+  -> HTTP.Response
+  -> Effect Unit
+onHttpRequest onRequestError middleware request response =
+  runAff_ callback (runHyper middleware conn)
+  where
+    conn = HttpConn { request: mkHttpRequest request, response: response }
+
+    callback = case _ of
+      Left err -> onRequestError err
+      Right _ -> pure unit
 
 runServer
   :: forall (endingReqState :: RequestState)
@@ -50,25 +69,26 @@ runServer
   -> Hyper Aff (BodyUnread & StatusLineOpen) (endingReqState & ResponseEnded) Unit
   -> Effect Unit
 runServer options middleware = do
-  server <- HTTP.createServer onRequest
+  server <- HTTP.createServer (onHttpRequest options.onRequestError middleware)
   let listenOptions = { port: unwrap options.port
                       , hostname: unwrap options.hostname
                       , backlog: Nothing
                       }
   HTTP.listen server listenOptions (options.onListening options.hostname options.port)
-  where
-    onRequest :: HTTP.Request -> HTTP.Response -> Effect Unit
-    onRequest request response =
-      runAff_ callback (runHyper middleware conn)
-      where
-        conn = HttpConn { request: mkHttpRequest request
-                        , response: response
-                        }
 
-        callback =
-          case _ of
-            Left err -> options.onRequestError err
-            Right _ -> pure unit
+runServerSecure
+  :: forall (endingReqState :: RequestState)
+   . Options.Options SSLOptions
+  -> Options
+  -> Hyper Aff (BodyUnread & StatusLineOpen) (endingReqState & ResponseEnded) Unit
+  -> Effect Unit
+runServerSecure sslOptions options middleware = do
+  server <- HTTPS.createServer sslOptions (onHttpRequest options.onRequestError middleware)
+  let listenOptions = { port: unwrap options.port
+                      , hostname: unwrap options.hostname
+                      , backlog: Nothing
+                      }
+  HTTP.listen server listenOptions (options.onListening options.hostname options.port)
 
 newtype HttpConn = HttpConn { request :: HttpRequest
                             , response :: HTTP.Response
