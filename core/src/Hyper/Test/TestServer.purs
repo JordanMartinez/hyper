@@ -1,4 +1,4 @@
-module Hyper.Node.Test where
+module Hyper.Test.TestServer where
 
 import Prelude
 
