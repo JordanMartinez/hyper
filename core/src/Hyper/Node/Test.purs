@@ -14,7 +14,6 @@ import Hyper.Conn (type (&))
 import Hyper.Request (class ReadableBody, class Request)
 import Hyper.Response (class Response)
 import Hyper.Test.Types (TestRequest(..), TestResponse, _responseBody, _responseHeaders, _status)
-import Node.Buffer (Buffer)
 
 newtype TestServer body m from to a =
   TestServer (Indexed (StateT (TestResponse body) (ReaderT TestRequest m)) from to a)
