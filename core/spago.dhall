@@ -35,5 +35,5 @@
     , "unordered-collections"
     ]
 , packages =
-    ./packages.dhall
+    ../packages.dhall
 }
