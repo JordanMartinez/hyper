@@ -10,7 +10,6 @@ module Hyper.Node.Server
        , write
        , module Hyper.Node.Server.Options
        , runServer
-       , runServer'
        ) where
 
 import Prelude
@@ -21,7 +20,6 @@ import Control.Monad.Reader (ReaderT, ask, runReaderT)
 import Data.Either (Either(..), either)
 import Data.HTTP.Method as Method
 import Data.Indexed (Indexed(..))
-import Data.IndexedNaturalTransformation (type (~~>))
 import Data.Maybe (Maybe(..))
 import Data.Newtype (unwrap)
 import Data.Tuple (Tuple(..))
@@ -51,16 +49,7 @@ runServer
    . Options
   -> Hyper Aff (BodyUnread & StatusLineOpen) (endingReqState & ResponseEnded) Unit
   -> Effect Unit
-runServer = runServer' identity
-
-runServer'
-  :: forall (endingReqState :: RequestState) m
-   . IxMonad m
-  => (m ~~> Hyper Aff)
-  -> Options
-  -> m (BodyUnread & StatusLineOpen) (endingReqState & ResponseEnded) Unit
-  -> Effect Unit
-runServer' runApp options middleware = do
+runServer options middleware = do
   server <- HTTP.createServer onRequest
   let listenOptions = { port: unwrap options.port
                       , hostname: unwrap options.hostname
@@ -70,7 +59,7 @@ runServer' runApp options middleware = do
   where
     onRequest :: HTTP.Request -> HTTP.Response -> Effect Unit
     onRequest request response =
-      runAff_ callback (runHyper (runApp middleware) conn)
+      runAff_ callback (runHyper middleware conn)
       where
         conn = HttpConn { request: mkHttpRequest request
                         , response: response
